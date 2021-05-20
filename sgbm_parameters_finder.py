@@ -39,6 +39,7 @@ class SGBMParameterFinder:
         self.stop_event = Event()
 
     def add_image(self, image, new_size, sliders_num):
+        image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         im = Image.fromarray(cv2.resize(image, new_size))
         self.img_tk = ImageTk.PhotoImage(image=im)
         im_tk = tk.Label(self.root, image=self.img_tk)
