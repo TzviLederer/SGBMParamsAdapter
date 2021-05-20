@@ -17,14 +17,14 @@ class SGBMParameterFinder:
         self.new_size = tuple([int(x * resize_ratio) for x in self.image_l.shape[:2][::-1]])
 
         sliders_ranges = {'minDisparity': (0, 100),
-                          'numDisparities': (16, 16 * 16),  # must be divided by 16
-                          'blockSize': (1, 15),  # odd number >= 1
+                          'numDisparities': (16, 32 * 16),  # must be divided by 16
+                          'blockSize': (1, 31),  # odd number >= 1
                           'P1': (8, 300),  # penalty of changing 1 disparity
                           'P2': (32, 600),  # penalty of changing more than 1 disparity, requires P2 > P1
                           'disp12MaxDiff': (-1, 10),  # maximum pixels difference allowed
                           # of the r->l from the l->r disparity image
                           'preFilterCap': (0, 20),  # derivative clipping size
-                          'uniquenessRatio': (0, 100),
+                          'uniquenessRatio': (0, 10),
                           'speckleWindowSize': (0, 200),
                           'speckleRange': (0, 5)}
         self.root = tk.Tk()
@@ -32,6 +32,12 @@ class SGBMParameterFinder:
 
         self.sliders = {title: self.add_slider(self.root, i, slider_range, title)
                         for i, (title, slider_range) in enumerate(sliders_ranges.items())}
+
+        self.label_ready = tk.StringVar()
+        depositLabel = tk.Label(self.root, textvariable=self.label_ready)
+        depositLabel.grid(row=len(sliders_ranges) * 2 + 1, column=0)
+        # self.label_ready = tk.Label(self.root, text='ready')
+        # self.label_ready.grid(row=len(sliders_ranges) * 2 + 1, column=0)
 
         self.image = self.refresh_image()
         self.add_image(self.image, self.new_size, len(self.sliders) * 2)
@@ -71,9 +77,16 @@ class SGBMParameterFinder:
                     self.add_image(self.image, self.new_size, len(self.sliders) * 2)
 
     def refresh_image(self):
+        self.label_ready.set('working')
         params = {k: val[1].get() for k, val in self.sliders.items()}
+        params['numDisparities'] = 16 * int(params['numDisparities'] / 16)
+        params['blockSize'] = params['blockSize'] - params['blockSize'] % 2 + 1
+
         stereo = cv2.StereoSGBM_create(**params)
-        return stereo.compute(self.image_l, self.image_r).astype(float) / 16.
+        out = stereo.compute(self.image_l, self.image_r).astype(float) / 16.
+
+        self.label_ready.set('ready')
+        return out
 
     def on_closing(self):
         if self.out_filename is not None:
