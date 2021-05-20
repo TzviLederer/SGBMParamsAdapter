@@ -1,12 +1,16 @@
-import tkinter as tk
-from PIL import Image, ImageTk
-import cv2
-from threading import Thread, Event
+import json
 import time
+import tkinter as tk
+from threading import Thread, Event
+
+import cv2
+from PIL import Image, ImageTk
 
 
 class SGBMParameterFinder:
-    def __init__(self, image_l, image_r, resize_ratio=0.5):
+    def __init__(self, image_l, image_r, out_filename=None, resize_ratio=0.5):
+        self.out_filename = out_filename
+
         self.image_l = image_l
         self.image_r = image_r
 
@@ -17,8 +21,8 @@ class SGBMParameterFinder:
                           'blockSize': (1, 15),  # odd number >= 1
                           'P1': (8, 300),  # penalty of changing 1 disparity
                           'P2': (32, 600),  # penalty of changing more than 1 disparity, requires P2 > P1
-                          'disp12MaxDiff': (-1, 10),    # maximum pixels difference allowed
-                                                        # of the r->l from the l->r disparity image
+                          'disp12MaxDiff': (-1, 10),  # maximum pixels difference allowed
+                          # of the r->l from the l->r disparity image
                           'preFilterCap': (0, 20),  # derivative clipping size
                           'uniquenessRatio': (0, 100),
                           'speckleWindowSize': (0, 200),
@@ -41,7 +45,7 @@ class SGBMParameterFinder:
         im_tk.grid(row=0, column=0, columnspan=1, rowspan=sliders_num)
 
     def play(self):
-        self.t = Thread(target=self.sample_sliders, args=(self.stop_event, ))
+        self.t = Thread(target=self.sample_sliders, args=(self.stop_event,))
         self.t.start()
         self.root.mainloop()
 
@@ -55,9 +59,9 @@ class SGBMParameterFinder:
 
         return w_text, w
 
-    def sample_sliders(self, stop_event):
+    def sample_sliders(self, stop_threads):
         sliders_values = {k: val[1].get() for k, val in self.sliders.items()}
-        while not stop_event.is_set():
+        while not stop_threads.is_set():
             time.sleep(0.1)
             for k, val in self.sliders.items():
                 if sliders_values[k] != val[1].get():
@@ -71,6 +75,14 @@ class SGBMParameterFinder:
         return stereo.compute(self.image_l, self.image_r).astype(float) / 16.
 
     def on_closing(self):
-        self.stop_event.set()
+        if self.out_filename is not None:
+            self.save_params(self.out_filename)
+
+        self.stop_event = True
         time.sleep(0.5)
         self.root.destroy()
+
+    def save_params(self, filename):
+        sliders_values = {k: val[1].get() for k, val in self.sliders.items()}
+        with open(filename, 'w') as outfile:
+            json.dump(sliders_values, outfile)
