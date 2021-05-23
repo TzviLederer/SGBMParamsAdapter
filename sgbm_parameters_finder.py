@@ -20,19 +20,21 @@ class SGBMParameterFinder:
                           'preFilterCap': (0, 20),  # derivative clipping size
                           'uniquenessRatio': (0, 10),
                           'speckleWindowSize': (0, 200),
-                          'speckleRange': (0, 5)}
+                          'speckleRange': (0, 5),
+                          '100sigma': (0, 300),
+                          'lambda': (0, 8000)}
 
+        # column number in the display window
         self.gray_column = 0
         self.disparity_column = 1
         self.sliders_column = 2
 
         self.out_filename = out_filename
+        self.max_display_ims = 3
 
         self.image_l = image_l
         self.image_r = image_r
-        self.image_list_tk = []
-
-        self.max_display_ims = 3
+        self.image_list_tk = [self.image_l, self.image_r, None] #  [None] * self.max_display_ims
 
         self.new_size = tuple([int(x * resize_ratio) for x in self.image_l.shape[:2][::-1]])
         self.gray_new_size = tuple([int(x/self.max_display_ims) for x in self.new_size])
@@ -49,15 +51,18 @@ class SGBMParameterFinder:
     def prepare_window(self, sliders_ranges):
         self.sliders = {title: self.add_slider(self.root, i, slider_range, title, column=self.sliders_column)
                         for i, (title, slider_range) in enumerate(sliders_ranges.items())}
-        self.add_ready_label(sliders_ranges)
-        self.image = self.refresh_image()
 
-        self.add_gray_images(self.image_l, self.gray_new_size,
-                             place=0, row_span=self.gray_row_span, column=self.gray_column)
-        self.add_gray_images(self.image_r, self.gray_new_size,
-                             place=1, row_span=self.gray_row_span, column=self.gray_column)
+        self.add_ready_label(sliders_ranges)
+        self.image, wls_im = self.refresh_image()
+
         self.add_disparity_image(self.image, self.new_size,
                                  row_span=self.disparity_row_span, column=self.disparity_column)
+
+        self.image_list_tk[-1] = self.to_colormap(wls_im)
+        # gray_ims = [self.image_l, self.image_r, wls_im]
+        for i, im_display in enumerate(self.image_list_tk):
+            self.add_gray_images(im_display, self.gray_new_size,
+                                 place=i, row_span=self.gray_row_span, column=self.gray_column)
 
     def add_ready_label(self, sliders_ranges):
         self.label_ready = tk.StringVar()
@@ -65,17 +70,21 @@ class SGBMParameterFinder:
         deposit_label.grid(row=len(sliders_ranges) * 2 + 1, column=self.disparity_column)
 
     def add_disparity_image(self, image, new_size, row_span, column=0):
-        image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        image = cv2.applyColorMap(image, cv2.COLORMAP_JET)
+        image = self.to_colormap(image)
 
         im = Image.fromarray(cv2.resize(image, new_size))
         self.img_tk = ImageTk.PhotoImage(image=im)
         im_tk = tk.Label(self.root, image=self.img_tk)
         im_tk.grid(row=0, column=column, columnspan=1, rowspan=row_span)
 
+    def to_colormap(self, image):
+        image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        image = cv2.applyColorMap(image, cv2.COLORMAP_JET)
+        return image
+
     def add_gray_images(self, image, new_size, place, row_span, column=0):
         im = Image.fromarray(cv2.resize(image, new_size))
-        self.image_list_tk.append(ImageTk.PhotoImage(image=im))
+        self.image_list_tk[place] = ImageTk.PhotoImage(image=im)
         img_tk = tk.Label(self.root, image=self.image_list_tk[place])
         img_tk.grid(row=place * row_span, column=column, columnspan=1, rowspan=row_span)
 
@@ -101,9 +110,12 @@ class SGBMParameterFinder:
             for k, val in self.sliders.items():
                 if sliders_values[k] != val[1].get():
                     sliders_values[k] = val[1].get()
-                    self.image = self.refresh_image()
+                    self.image, wls_img = self.refresh_image()
+                    wls_img = self.to_colormap(wls_img)
                     self.add_disparity_image(self.image, self.new_size,
                                              row_span=self.disparity_row_span, column=self.disparity_column)
+                    self.add_gray_images(wls_img, self.gray_new_size, self.max_display_ims-1,
+                                         self.gray_row_span, self.gray_column)
 
     def refresh_image(self):
         self.label_ready.set('working')
@@ -112,20 +124,35 @@ class SGBMParameterFinder:
         params['blockSize'] = params['blockSize'] - params['blockSize'] % 2 + 1
         sgbm_params = params.copy()
         sgbm_params.pop('downscale rate')
+        sgbm_params.pop('100sigma')
+        sgbm_params.pop('lambda')
 
         stereo = cv2.StereoSGBM_create(**sgbm_params)
 
         image_l, image_r = self.downscale_images(params['downscale rate'])
         out = stereo.compute(image_l, image_r).astype(float) / 16.
 
+        wls_im = self.wls_filter(stereo)
         self.label_ready.set('ready')
-        return out
+
+        return out, wls_im
 
     def downscale_images(self, downscale_rate):
         resize_new_shape = tuple([int(x / downscale_rate) for x in self.image_l.shape[:2][::-1]])
         image_l = cv2.resize(self.image_l, resize_new_shape)
         image_r = cv2.resize(self.image_r, resize_new_shape)
         return image_l, image_r
+
+    def wls_filter(self, stereo):
+        right_matcher = cv2.ximgproc.createRightMatcher(stereo)
+        left_disp = stereo.compute(self.image_l, self.image_r)
+        right_disp = right_matcher.compute(self.image_r, self.image_l)
+
+        wls_filter = cv2.ximgproc.createDisparityWLSFilter(stereo)
+        params = {k: val[1].get() for k, val in self.sliders.items() if k in ['100sigma', 'lambda']}
+        wls_filter.setLambda(params['lambda'])
+        wls_filter.setSigmaColor(params['100sigma']/100)
+        return wls_filter.filter(left_disp, self.image_l, disparity_map_right=right_disp)
 
     def on_closing(self):
         if self.out_filename is not None:
