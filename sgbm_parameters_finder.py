@@ -4,6 +4,7 @@ import tkinter as tk
 from threading import Thread, Event
 
 import cv2
+import numpy as np
 from PIL import Image, ImageTk
 
 
@@ -15,14 +16,22 @@ class SGBMParameterFinder:
                           'blockSize': (1, 31),  # odd number >= 1
                           'P1': (8, 300),  # penalty of changing 1 disparity
                           'P2': (32, 600),  # penalty of changing more than 1 disparity, requires P2 > P1
-                          'disp12MaxDiff': (-1, 10),  # maximum pixels difference allowed
-                          # of the r->l from the l->r disparity image
+                          'disp12MaxDiff': (-1, 10),    # maximum pixels difference allowed
+                                                        # of the r->l from the l->r disparity image
                           'preFilterCap': (0, 20),  # derivative clipping size
                           'uniquenessRatio': (0, 10),
                           'speckleWindowSize': (0, 200),
                           'speckleRange': (0, 5),
                           '100sigma': (0, 300),
-                          'lambda': (0, 8000)}
+                          'lambda': (0, 8000),
+                          '100 gamma l': (1, 200), '100 gamma r': (1, 200)}
+
+        self.non_sgbm_params = ['100sigma', 'lambda', 'downscale rate', '100 gamma l', '100 gamma r']
+        self.gray_params = ['100 gamma l', '100 gamma r']
+
+        # some initializations
+        self.sliders = None
+        self.image = None
 
         # column number in the display window
         self.gray_column = 0
@@ -32,12 +41,16 @@ class SGBMParameterFinder:
         self.out_filename = out_filename
         self.max_display_ims = 3
 
+        self.image_l_org = image_l
+        self.image_r_org = image_r
+
         self.image_l = image_l
         self.image_r = image_r
-        self.image_list_tk = [self.image_l, self.image_r, None] #  [None] * self.max_display_ims
+
+        self.image_list_tk = [self.image_l, self.image_r, None]
 
         self.new_size = tuple([int(x * resize_ratio) for x in self.image_l.shape[:2][::-1]])
-        self.gray_new_size = tuple([int(x/self.max_display_ims) for x in self.new_size])
+        self.gray_new_size = tuple([int(x / self.max_display_ims) for x in self.new_size])
 
         self.gray_row_span = len(sliders_ranges) * 2 // self.max_display_ims
         self.disparity_row_span = len(sliders_ranges) * 2
@@ -58,7 +71,7 @@ class SGBMParameterFinder:
         self.add_disparity_image(self.image, self.new_size,
                                  row_span=self.disparity_row_span, column=self.disparity_column)
 
-        self.image_list_tk[-1] = self.to_colormap(wls_im)
+        self.image_list_tk[-1] = to_colormap(wls_im)
         # gray_ims = [self.image_l, self.image_r, wls_im]
         for i, im_display in enumerate(self.image_list_tk):
             self.add_gray_images(im_display, self.gray_new_size,
@@ -70,17 +83,12 @@ class SGBMParameterFinder:
         deposit_label.grid(row=len(sliders_ranges) * 2 + 1, column=self.disparity_column)
 
     def add_disparity_image(self, image, new_size, row_span, column=0):
-        image = self.to_colormap(image)
+        image = to_colormap(image)
 
         im = Image.fromarray(cv2.resize(image, new_size))
         self.img_tk = ImageTk.PhotoImage(image=im)
         im_tk = tk.Label(self.root, image=self.img_tk)
         im_tk.grid(row=0, column=column, columnspan=1, rowspan=row_span)
-
-    def to_colormap(self, image):
-        image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        image = cv2.applyColorMap(image, cv2.COLORMAP_JET)
-        return image
 
     def add_gray_images(self, image, new_size, place, row_span, column=0):
         im = Image.fromarray(cv2.resize(image, new_size))
@@ -98,8 +106,8 @@ class SGBMParameterFinder:
         w_text = tk.Label(root, text=title)
         w = tk.Scale(root, from_=slider_range[0], to=slider_range[1], orient=tk.HORIZONTAL)
 
-        w_text.grid(row=row * 2, column=column)
-        w.grid(row=row * 2 + 1, column=column)
+        w_text.grid(row=row * 2 + 1, column=column)
+        w.grid(row=row * 2, column=column)
 
         return w_text, w
 
@@ -110,32 +118,45 @@ class SGBMParameterFinder:
             for k, val in self.sliders.items():
                 if sliders_values[k] != val[1].get():
                     sliders_values[k] = val[1].get()
+
+                    self.image_l = gamma_correction(self.image_l_org, gamma=sliders_values['100 gamma l'] / 100)
+                    self.image_r = gamma_correction(self.image_r_org, gamma=sliders_values['100 gamma r'] / 100)
+
                     self.image, wls_img = self.refresh_image()
-                    wls_img = self.to_colormap(wls_img)
+                    wls_img = to_colormap(wls_img)
+
                     self.add_disparity_image(self.image, self.new_size,
                                              row_span=self.disparity_row_span, column=self.disparity_column)
-                    self.add_gray_images(wls_img, self.gray_new_size, self.max_display_ims-1,
+                    self.add_gray_images(wls_img, self.gray_new_size, self.max_display_ims - 1,
                                          self.gray_row_span, self.gray_column)
+                    self.add_gray_images(self.image_l, self.gray_new_size, 0, self.gray_row_span, self.gray_column)
+                    self.add_gray_images(self.image_r, self.gray_new_size, 1, self.gray_row_span, self.gray_column)
 
     def refresh_image(self):
         self.label_ready.set('working')
+        disparity_image, wls_im = self.compute_disparity()
+        self.label_ready.set('ready')
+
+        return disparity_image, wls_im
+
+    def compute_disparity(self):
+        params, sgbm_params = self.prepare_sgbm_params()
+        stereo = cv2.StereoSGBM_create(**sgbm_params)
+        image_l, image_r = self.downscale_images(params['downscale rate'])
+        disparity_image = stereo.compute(image_l, image_r).astype(float) / 16.
+        wls_im = self.wls_filter(stereo)
+        return disparity_image, wls_im
+
+    def prepare_sgbm_params(self):
         params = {k: val[1].get() for k, val in self.sliders.items()}
         params['numDisparities'] = 16 * int(params['numDisparities'] / 16)
         params['blockSize'] = params['blockSize'] - params['blockSize'] % 2 + 1
+
         sgbm_params = params.copy()
-        sgbm_params.pop('downscale rate')
-        sgbm_params.pop('100sigma')
-        sgbm_params.pop('lambda')
+        for k in self.non_sgbm_params:
+            sgbm_params.pop(k)
 
-        stereo = cv2.StereoSGBM_create(**sgbm_params)
-
-        image_l, image_r = self.downscale_images(params['downscale rate'])
-        out = stereo.compute(image_l, image_r).astype(float) / 16.
-
-        wls_im = self.wls_filter(stereo)
-        self.label_ready.set('ready')
-
-        return out, wls_im
+        return params, sgbm_params
 
     def downscale_images(self, downscale_rate):
         resize_new_shape = tuple([int(x / downscale_rate) for x in self.image_l.shape[:2][::-1]])
@@ -151,7 +172,7 @@ class SGBMParameterFinder:
         wls_filter = cv2.ximgproc.createDisparityWLSFilter(stereo)
         params = {k: val[1].get() for k, val in self.sliders.items() if k in ['100sigma', 'lambda']}
         wls_filter.setLambda(params['lambda'])
-        wls_filter.setSigmaColor(params['100sigma']/100)
+        wls_filter.setSigmaColor(params['100sigma'] / 100)
         return wls_filter.filter(left_disp, self.image_l, disparity_map_right=right_disp)
 
     def on_closing(self):
@@ -166,3 +187,14 @@ class SGBMParameterFinder:
         sliders_values = {k: val[1].get() for k, val in self.sliders.items()}
         with open(filename, 'w') as outfile:
             json.dump(sliders_values, outfile)
+
+
+def gamma_correction(image, gamma=1):
+    image = image / 255
+    return np.uint8(255 * image ** gamma)
+
+
+def to_colormap(image):
+    image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    image = cv2.applyColorMap(image, cv2.COLORMAP_JET)
+    return image
