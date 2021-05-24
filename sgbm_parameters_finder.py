@@ -8,14 +8,22 @@ import numpy as np
 from PIL import Image, ImageTk
 
 
+def f_to_odd(num):
+    return num - num % 2 + 1
+
+
+def f_modulo_16(num):
+    return 16 * int(num / 16)
+
+
 class SGBMParameterFinder:
     def __init__(self, image_l, image_r, out_filename=None, resize_ratio=0.5):
         sliders_ranges = {'downscale rate': (1, 10),
                           'minDisparity': (0, 100),
                           'numDisparities': (16, 32 * 16),  # must be divided by 16
                           'blockSize': (1, 31),  # odd number >= 1
-                          'P1': (8, 300),  # penalty of changing 1 disparity
-                          'P2': (32, 600),  # penalty of changing more than 1 disparity, requires P2 > P1
+                          'P1': (8, 3000),  # penalty of changing 1 disparity
+                          'P2': (32, 6000),  # penalty of changing more than 1 disparity, requires P2 > P1
                           'disp12MaxDiff': (-1, 10),  # maximum pixels difference allowed
                           # of the r->l from the l->r disparity image
                           'preFilterCap': (0, 20),  # derivative clipping size
@@ -23,7 +31,7 @@ class SGBMParameterFinder:
                           'speckleWindowSize': (0, 200),
                           'speckleRange': (0, 5),
                           '100sigma': (0, 300),
-                          'lambda': (0, 8000),
+                          'lambda': (0, 300000),
                           '100 gamma l': (1, 200), '100 gamma r': (1, 200)}
 
         self.default_values = {'numDisparities': 128, 'blockSize': 5, 'P1': 8 * 3 * 5 * 5, 'P2': 32 * 3 * 5 * 5,
@@ -156,10 +164,16 @@ class SGBMParameterFinder:
         wls_im = self.wls_filter(stereo)
         return disparity_image, wls_im
 
+    def adjust_param(self, params, param_name, f):
+        params[param_name] = f(params[param_name])
+        self.sliders[param_name][1].set(params[param_name])
+        return params
+
     def prepare_sgbm_params(self):
         params = {k: val[1].get() for k, val in self.sliders.items()}
-        params['numDisparities'] = 16 * int(params['numDisparities'] / 16)
-        params['blockSize'] = params['blockSize'] - params['blockSize'] % 2 + 1
+
+        params = self.adjust_param(params, param_name='numDisparities', f=f_modulo_16)
+        params = self.adjust_param(params, param_name='blockSize', f=f_to_odd)
 
         sgbm_params = params.copy()
         for k in self.non_sgbm_params:
