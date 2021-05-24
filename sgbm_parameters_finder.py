@@ -16,8 +16,8 @@ class SGBMParameterFinder:
                           'blockSize': (1, 31),  # odd number >= 1
                           'P1': (8, 300),  # penalty of changing 1 disparity
                           'P2': (32, 600),  # penalty of changing more than 1 disparity, requires P2 > P1
-                          'disp12MaxDiff': (-1, 10),    # maximum pixels difference allowed
-                                                        # of the r->l from the l->r disparity image
+                          'disp12MaxDiff': (-1, 10),  # maximum pixels difference allowed
+                          # of the r->l from the l->r disparity image
                           'preFilterCap': (0, 20),  # derivative clipping size
                           'uniquenessRatio': (0, 10),
                           'speckleWindowSize': (0, 200),
@@ -25,6 +25,10 @@ class SGBMParameterFinder:
                           '100sigma': (0, 300),
                           'lambda': (0, 8000),
                           '100 gamma l': (1, 200), '100 gamma r': (1, 200)}
+
+        self.default_values = {'numDisparities': 128, 'blockSize': 5, 'P1': 8 * 3 * 5 * 5, 'P2': 32 * 3 * 5 * 5,
+                               'disp12MaxDiff': -1, '100sigma': 100, 'lambda': 8000,
+                               '100 gamma l': 100, '100 gamma r': 100}
 
         self.non_sgbm_params = ['100sigma', 'lambda', 'downscale rate', '100 gamma l', '100 gamma r']
         self.gray_params = ['100 gamma l', '100 gamma r']
@@ -62,9 +66,7 @@ class SGBMParameterFinder:
         self.prepare_window(sliders_ranges)
 
     def prepare_window(self, sliders_ranges):
-        self.sliders = {title: self.add_slider(self.root, i, slider_range, title, column=self.sliders_column)
-                        for i, (title, slider_range) in enumerate(sliders_ranges.items())}
-
+        self.prepare_sliders(sliders_ranges)
         self.add_ready_label(sliders_ranges)
         self.image, wls_im = self.refresh_image()
 
@@ -72,10 +74,17 @@ class SGBMParameterFinder:
                                  row_span=self.disparity_row_span, column=self.disparity_column)
 
         self.image_list_tk[-1] = to_colormap(wls_im)
-        # gray_ims = [self.image_l, self.image_r, wls_im]
+
         for i, im_display in enumerate(self.image_list_tk):
             self.add_gray_images(im_display, self.gray_new_size,
                                  place=i, row_span=self.gray_row_span, column=self.gray_column)
+
+    def prepare_sliders(self, sliders_ranges):
+        self.sliders = {title: self.add_slider(self.root, i, slider_range, title, column=self.sliders_column)
+                        for i, (title, slider_range) in enumerate(sliders_ranges.items())}
+        for k, val in self.sliders.items():
+            if k in self.default_values.keys():
+                val[1].set(self.default_values[k])
 
     def add_ready_label(self, sliders_ranges):
         self.label_ready = tk.StringVar()
