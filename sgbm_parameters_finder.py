@@ -8,14 +8,6 @@ import numpy as np
 from PIL import Image, ImageTk
 
 
-def f_to_odd(num):
-    return num - num % 2 + 1
-
-
-def f_modulo_16(num):
-    return 16 * int(num / 16)
-
-
 class SGBMParameterFinder:
     def __init__(self, image_l, image_r, out_filename=None, resize_ratio=0.5):
         sliders_ranges = {'downscale rate': (1, 10),
@@ -32,13 +24,14 @@ class SGBMParameterFinder:
                           'speckleRange': (0, 5),
                           '100sigma': (0, 300),
                           'lambda': (0, 300000),
-                          '100 gamma l': (1, 200), '100 gamma r': (1, 200)}
+                          '100 gamma l': (1, 200), '100 gamma r': (1, 200),
+                          'opacity': (0, 100)}
 
         self.default_values = {'numDisparities': 128, 'blockSize': 5, 'P1': 8 * 3 * 5 * 5, 'P2': 32 * 3 * 5 * 5,
                                'disp12MaxDiff': -1, '100sigma': 100, 'lambda': 8000,
                                '100 gamma l': 100, '100 gamma r': 100}
 
-        self.non_sgbm_params = ['100sigma', 'lambda', 'downscale rate', '100 gamma l', '100 gamma r']
+        self.non_sgbm_params = ['100sigma', 'lambda', 'downscale rate', '100 gamma l', '100 gamma r', 'opacity']
         self.gray_params = ['100 gamma l', '100 gamma r']
 
         # some initializations
@@ -101,11 +94,17 @@ class SGBMParameterFinder:
 
     def add_disparity_image(self, image, new_size, row_span, column=0):
         image = to_colormap(image)
+        image = self.set_opacity(image)
 
         im = Image.fromarray(cv2.resize(image, new_size))
         self.img_tk = ImageTk.PhotoImage(image=im)
         im_tk = tk.Label(self.root, image=self.img_tk)
         im_tk.grid(row=0, column=column, columnspan=1, rowspan=row_span)
+
+    def set_opacity(self, image):
+        opacity = self.sliders['opacity'][1].get()
+        image = np.uint8((image / 255 * (1 - opacity / 100) + self.image_l / 255 * (opacity / 100)) * 255)
+        return image
 
     def add_gray_images(self, image, new_size, place, row_span, column=0):
         im = Image.fromarray(cv2.resize(image, new_size))
@@ -141,6 +140,7 @@ class SGBMParameterFinder:
 
                     self.image, wls_img = self.refresh_image()
                     wls_img = to_colormap(wls_img)
+                    wls_img = self.set_opacity(wls_img)
 
                     self.add_disparity_image(self.image, self.new_size,
                                              row_span=self.disparity_row_span, column=self.disparity_column)
@@ -221,3 +221,11 @@ def to_colormap(image):
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
     image = cv2.applyColorMap(image, cv2.COLORMAP_JET)
     return image
+
+
+def f_to_odd(num):
+    return num - num % 2 + 1
+
+
+def f_modulo_16(num):
+    return 16 * int(num / 16)
